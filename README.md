@@ -25,13 +25,11 @@ The tap sits on the DiT, not on a sampler: the stock KSampler and **KSampler (Sp
 work. Spectrum's last steps are actual forwards; if the last step was a cached one, the node
 decodes the last actual forward and says so in the log.
 
-## ×2 output (preview)
+## ×2 output (test)
 
-Anima Pixel Decode has a `scale` input (1 / 2, default 1). At 2 the head decodes and upscales
-2× in one readout, so a 1024-tier render comes out at 2048; it needs a ×2 head file (the ×2
-preview file, once released), which also decodes at 1. A ×1 file such as
-`anima_pixel_head.safetensors` refuses `scale = 2` with the reason in the error. Head files of
-both kinds go in the same folders.
+`scale = 2` on Anima Pixel Decode decodes and upscales 2× in one readout. It needs a ×2 head
+file (`anima_pixel_head_x2_preview.safetensors` in the weights repo, a test file that will be
+replaced); a ×1 file refuses it.
 
 ## Where the head was trained
 
