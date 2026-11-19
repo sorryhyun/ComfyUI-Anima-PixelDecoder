@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import os
-import sys
 
 import comfy.model_management
 import folder_paths
 import torch
 import torch.nn.functional as F
 
+from ._vendor import pixel_head as ph  # anima_lora's library/anima/pixel_head.py
 from .tap import apply_tap, get_state
 
 logger = logging.getLogger(__name__)
@@ -22,23 +21,6 @@ if FOLDER not in folder_paths.folder_names_and_paths:
         FOLDER, os.path.join(folder_paths.models_dir, FOLDER)
     )
 folder_paths.folder_names_and_paths[FOLDER][1].add(".safetensors")
-
-
-def _vendor():
-    """``_vendor/pixel_head.py``: a copy of anima_lora's ``library/anima/pixel_head.py``
-    (``make vendor-sync`` there), imported under a private name."""
-    name = "comfyui_anima_pixel_decoder_pixel_head"
-    if name in sys.modules:
-        return sys.modules[name]
-    path = os.path.join(os.path.dirname(__file__), "_vendor", "pixel_head.py")
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-ph = _vendor()
 
 
 def _head_names() -> list[str]:
