@@ -38,7 +38,8 @@ replaced); a ×1 file refuses it.
 - Turbo: the 4-step turbo LoRA of
   [anima-turbo-4step](https://huggingface.co/sorryhyun/anima-turbo-4step), Euler 4 steps,
   shift 3 (`simple` scheduler), CFG 1 (last-step σ 0.5). The head was trained with that repo's
-  `old/anima_turbo_4step.safetensors`; v3 / v4 read about 3 dB lower against the VAE.
+  `anima_turbo_4step_v4_longer.safetensors` (the previous head, `old/anima_pixel_head.safetensors`
+  in the weights repo, with its `old/anima_turbo_4step.safetensors`).
 - fp32 residual stream: the Anima Adapter Loader's `stream = fp32` (or `AnimaStreamFP32`) from
   [ComfyUI-Anima_lora-Adapter](https://github.com/sorryhyun/ComfyUI-Anima_lora-Adapter).
 
