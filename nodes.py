@@ -57,8 +57,14 @@ def _load_head(path: str, device) -> torch.nn.Module:
 
 
 @torch.no_grad()
-def pixel_decode(head, state, latent: torch.Tensor) -> torch.Tensor:
-    """IMAGE (B, H, W, 3) in [0, 1] from the tap's last step, on the intermediate device."""
+def pixel_decode(head, state, latent: torch.Tensor, scale: int = 1) -> torch.Tensor:
+    """IMAGE (B, scale·H, scale·W, 3) in [0, 1] from the tap's last step, on the
+    intermediate device. ``scale`` 2 needs a ×2 head file (stamped ``x2_depth``)."""
+    if scale not in ph.head_scales(head):
+        raise ValueError(
+            f"Anima Pixel Decode: scale {scale} needs a ×2 head file (stamped x2_depth); "
+            "this file has the ×1 output only"
+        )
     f, x, sigma = state.features(state.cond_scale())
     step = state.last
     if ph.out_of_range(sigma, head.sigma_ranges):
@@ -97,11 +103,15 @@ def pixel_decode(head, state, latent: torch.Tensor) -> torch.Tensor:
     f = f.to(dev)
     if h % 2 or w % 2:
         x = F.pad(x, (0, w % 2, 0, h % 2), mode="replicate")
+    if isinstance(head, ph.PixelHeadX2):
+        fwd = lambda f, lat: head(f, lat, scale=scale)  # noqa: E731
+    else:
+        fwd = head
     out = []
     with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
         for b in range(f.shape[0]):
-            out.append(head(f[b], ph.lat_patches(x[b])).float())
-    px = torch.stack(out)[:, :, : h * 8, : w * 8].clamp(-1, 1)
+            out.append(fwd(f[b], ph.lat_patches(x[b])).float())
+    px = torch.stack(out)[:, :, : h * 8 * scale, : w * 8 * scale].clamp(-1, 1)
     img = ((px + 1) / 2).permute(0, 2, 3, 1)
     return img.to(comfy.model_management.intermediate_device(), torch.float32)
 
@@ -133,7 +143,17 @@ class AnimaPixelDecode:
                 "model": ("MODEL", {"tooltip": "The tapped MODEL the sampler ran."}),
                 "samples": ("LATENT", {"tooltip": "The sampler's output."}),
                 "head_name": (_head_names(),),
-            }
+            },
+            "optional": {
+                "scale": (
+                    ["1", "2"],
+                    {
+                        "default": "1",
+                        "tooltip": "2: decode and 2× upscale in one readout (needs a ×2 "
+                        "head file, which also decodes at 1).",
+                    },
+                ),
+            },
         }
 
     RETURN_TYPES = ("IMAGE",)
@@ -142,10 +162,11 @@ class AnimaPixelDecode:
     DESCRIPTION = (
         "Decodes the last sampling step to RGB with the Anima pixel head instead of the "
         "VAE. Trained at Euler shift 3 with 20–50 steps on the base DiT (CFG 4) and at the "
-        "4-step turbo (CFG 1); elsewhere it decodes with a warning in the log."
+        "4-step turbo (CFG 1); elsewhere it decodes with a warning in the log. scale 2 "
+        "returns the image at twice the latent's pixel size (×2 head file only)."
     )
 
-    def decode(self, model, samples, head_name):
+    def decode(self, model, samples, head_name, scale=1):
         state = get_state(model)
         if state is None:
             raise RuntimeError(
@@ -153,7 +174,7 @@ class AnimaPixelDecode:
                 "the sampler and connect the same MODEL here"
             )
         head = _load_head(_head_path(head_name), comfy.model_management.get_torch_device())
-        return (pixel_decode(head, state, samples["samples"]),)
+        return (pixel_decode(head, state, samples["samples"], int(scale)),)
 
 
 NODE_CLASS_MAPPINGS = {
