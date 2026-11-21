@@ -57,14 +57,13 @@ def _load_head(path: str, device) -> torch.nn.Module:
 
 
 @torch.no_grad()
-def pixel_decode(head, state, latent: torch.Tensor, scale: int = 1) -> torch.Tensor:
+def pixel_decode(
+    head, state, latent: torch.Tensor, scale: int | None = None
+) -> torch.Tensor:
     """IMAGE (B, scale·H, scale·W, 3) in [0, 1] from the tap's last step, on the
-    intermediate device. ``scale`` 2 needs a ×2 head file (stamped ``x2_depth``)."""
-    if scale not in ph.head_scales(head):
-        raise ValueError(
-            f"Anima Pixel Decode: scale {scale} needs a ×2 head file (stamped x2_depth); "
-            "this file has the ×1 output only"
-        )
+    intermediate device. ``scale`` None decodes at the file's own scale (2 for a ×2-only
+    file, else 1); a scale the file does not hold raises."""
+    scale = ph.check_scale(head, scale, name="Anima Pixel Decode")
     f, x, sigma = state.features(state.cond_scale())
     step = state.last
     if ph.out_of_range(sigma, head.sigma_ranges):
@@ -146,11 +145,12 @@ class AnimaPixelDecode:
             },
             "optional": {
                 "scale": (
-                    ["1", "2"],
+                    ["auto", "1", "2"],
                     {
-                        "default": "1",
-                        "tooltip": "2: decode and 2× upscale in one readout (needs a ×2 "
-                        "head file, which also decodes at 1).",
+                        "default": "auto",
+                        "tooltip": "auto: the head file's own scale (×2 for "
+                        "anima_pixel_head_x2, ×1 for anima_pixel_head). 1 / 2 ask for "
+                        "one; a scale the file does not hold is refused.",
                     },
                 ),
             },
@@ -162,11 +162,12 @@ class AnimaPixelDecode:
     DESCRIPTION = (
         "Decodes the last sampling step to RGB with the Anima pixel head instead of the "
         "VAE. Trained at Euler shift 3 with 20–50 steps on the base DiT (CFG 4) and at the "
-        "4-step turbo (CFG 1); elsewhere it decodes with a warning in the log. scale 2 "
-        "returns the image at twice the latent's pixel size (×2 head file only)."
+        "4-step turbo (CFG 1); elsewhere it decodes with a warning in the log. The head "
+        "file decides the scale: a ×2 file returns the image at twice the latent's pixel "
+        "size."
     )
 
-    def decode(self, model, samples, head_name, scale=1):
+    def decode(self, model, samples, head_name, scale="auto"):
         state = get_state(model)
         if state is None:
             raise RuntimeError(
@@ -174,7 +175,8 @@ class AnimaPixelDecode:
                 "the sampler and connect the same MODEL here"
             )
         head = _load_head(_head_path(head_name), comfy.model_management.get_torch_device())
-        return (pixel_decode(head, state, samples["samples"], int(scale)),)
+        scale = None if str(scale) == "auto" else int(scale)
+        return (pixel_decode(head, state, samples["samples"], scale),)
 
 
 NODE_CLASS_MAPPINGS = {

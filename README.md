@@ -25,17 +25,19 @@ The tap sits on the DiT, not on a sampler: the stock KSampler and **KSampler (Sp
 work. Spectrum's last steps are actual forwards; if the last step was a cached one, the node
 decodes the last actual forward and says so in the log.
 
-## ×2 output (test)
+## ×2 output
 
-`scale = 2` on Anima Pixel Decode decodes and upscales 2× in one readout. It needs a ×2 head
-file (`anima_pixel_head_x2_preview.safetensors` in the weights repo, a test file that will be
-replaced); a ×1 file refuses it.
+`anima_pixel_head_x2.safetensors` (same weights repo) decodes and upscales 2× in one readout:
+a 1024² render comes out at 2048². Pick it in `head_name`; `scale = auto` (the default) decodes
+at the file's own scale, so the ×2 file returns 2× and `anima_pixel_head.safetensors` returns ×1.
+The ×2 file has no ×1 output: `scale = 1` on it is refused, as `scale = 2` is on the ×1 file.
+It was trained on the base DiT only (below); on the 4-step turbo it decodes with a warning.
 
 ## Where the head was trained
 
 - Base DiT (`anima-base-v1.0`): Euler, shift 3, 20 … 50 steps (last-step σ 0.058 … 0.136),
-  CFG 4, Spectrum included.
-- Turbo: the 4-step turbo LoRA of
+  CFG 4, Spectrum included. Both files.
+- Turbo (the ×1 file only): the 4-step turbo LoRA of
   [anima-turbo-4step](https://huggingface.co/sorryhyun/anima-turbo-4step), Euler 4 steps,
   shift 3 (`simple` scheduler), CFG 1 (last-step σ 0.5). The head was trained with that repo's
   `anima_turbo_4step_v4_longer.safetensors` (the previous head, `old/anima_pixel_head.safetensors`
