@@ -143,17 +143,6 @@ class AnimaPixelDecode:
                 "samples": ("LATENT", {"tooltip": "The sampler's output."}),
                 "head_name": (_head_names(),),
             },
-            "optional": {
-                "scale": (
-                    ["auto", "1", "2"],
-                    {
-                        "default": "auto",
-                        "tooltip": "auto: the head file's own scale (×2 for "
-                        "anima_pixel_head_x2, ×1 for anima_pixel_head). 1 / 2 ask for "
-                        "one; a scale the file does not hold is refused.",
-                    },
-                ),
-            },
         }
 
     RETURN_TYPES = ("IMAGE",)
@@ -167,7 +156,7 @@ class AnimaPixelDecode:
         "size."
     )
 
-    def decode(self, model, samples, head_name, scale="auto"):
+    def decode(self, model, samples, head_name, **_):  # **_: a saved 0.2 / 0.3.0 `scale`
         state = get_state(model)
         if state is None:
             raise RuntimeError(
@@ -175,8 +164,7 @@ class AnimaPixelDecode:
                 "the sampler and connect the same MODEL here"
             )
         head = _load_head(_head_path(head_name), comfy.model_management.get_torch_device())
-        scale = None if str(scale) == "auto" else int(scale)
-        return (pixel_decode(head, state, samples["samples"], scale),)
+        return (pixel_decode(head, state, samples["samples"]),)
 
 
 NODE_CLASS_MAPPINGS = {

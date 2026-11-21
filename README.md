@@ -28,9 +28,8 @@ decodes the last actual forward and says so in the log.
 ## ×2 output
 
 `anima_pixel_head_x2.safetensors` (same weights repo) decodes and upscales 2× in one readout:
-a 1024² render comes out at 2048². Pick it in `head_name`; `scale = auto` (the default) decodes
-at the file's own scale, so the ×2 file returns 2× and `anima_pixel_head.safetensors` returns ×1.
-The ×2 file has no ×1 output: `scale = 1` on it is refused, as `scale = 2` is on the ×1 file.
+a 1024² render comes out at 2048². Pick it in `head_name`: the file decides the scale, so the ×2
+file returns 2× and `anima_pixel_head.safetensors` returns ×1 (there is no scale input).
 It was trained on the base DiT only (below); on the 4-step turbo it decodes with a warning.
 
 ## Where the head was trained
