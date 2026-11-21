@@ -14,6 +14,12 @@ rebuild downstream is fine):
   (CFG++, rescale, …) replaced the plain combine.
 
 Only the last step with an actual forward is kept.
+
+SMC-CFG (Spectrum KSampler) adds a per-element correction to the plain combine in velocity
+space. When it is the step's ``sampler_cfg_function``, the post-CFG function keeps the residual
+Δv = v_smc − v_plain, the DIFFUSION_MODEL wrapper probes the live ``final_layer.linear`` for
+its weight W, and the combined features are shifted by the minimum-norm Δf = W⁺·Δv per token,
+so W·f + b gives the velocity the sampler used.
 """
 
 from __future__ import annotations
@@ -28,13 +34,59 @@ logger = logging.getLogger(__name__)
 KEY = "anima_pixel_tap"
 
 
+def is_smc_cfg(fn) -> bool:
+    """The ``sampler_cfg_function`` that ComfyUI-Spectrum-KSampler's ``install_smc_cfg`` sets."""
+    return getattr(fn, "__qualname__", "").startswith("_make_smc_cfg_function.")
+
+
+@torch.no_grad()
+def linear_weight(linear, f: torch.Tensor) -> torch.Tensor:
+    """(out, in) fp32 weight of ``linear`` as it runs (patches and casts included), probed
+    with the identity on ``f``'s device and dtype."""
+    d = f.shape[-1]
+    probe = torch.cat([torch.zeros(1, d), torch.eye(d)]).to(f.device, f.dtype)
+    out = linear(probe).float()
+    return (out[1:] - out[:1]).T.contiguous()
+
+
+def feature_shift(dv: torch.Tensor, w: torch.Tensor, grid: tuple[int, int, int]) -> torch.Tensor:
+    """Minimum-norm feature shift (B, T, gh, gw, D) whose ``final_layer.linear`` output is the
+    velocity residual ``dv`` (B, C, T, H, W), patched as the DiT's unpatchify
+    ``B T H W (p1 p2 t C) -> B C (T t) (H p1) (W p2)`` with t = 1."""
+    if dv.ndim == 4:
+        dv = dv.unsqueeze(2)
+    b, c, t, h, wd = dv.shape
+    gt, gh, gw = grid
+    p = int(round((w.shape[0] // c) ** 0.5))
+    if p * p * c != w.shape[0] or t != gt:
+        raise RuntimeError(
+            f"Anima Pixel Decode: final_layer.linear has {w.shape[0]} outputs, which is not "
+            f"a p×p patch of {c} channels over {t} frame(s)"
+        )
+    dv = torch.nn.functional.pad(dv.float(), (0, gw * p - wd, 0, gh * p - h))
+    tok = (
+        dv.view(b, c, t, gh, p, gw, p)
+        .permute(0, 2, 3, 5, 4, 6, 1)
+        .reshape(b, t, gh, gw, p * p * c)
+    )
+    return tok.to(w.device) @ torch.linalg.pinv(w).T
+
+
 class TapState:
     def __init__(self):
         self.step: dict | None = None  # the step in progress / the last step
         self.last: dict | None = None  # the last step with an actual forward
+        self.smc = False  # the last CFG combine was SMC-CFG; the wrapper then probes W
 
     def open_step(self, sigma: float) -> None:
-        self.step = {"sigma": sigma, "forwards": [], "cond_scale": None, "cfg_fn": False}
+        self.step = {
+            "sigma": sigma,
+            "forwards": [],
+            "cond_scale": None,
+            "cfg_fn": None,  # None | "smc" | "other"
+            "dv": None,  # SMC: v_smc − v_plain (B, C, T, H, W) fp32
+            "w": None,  # SMC: final_layer.linear weight (out, in) fp32
+        }
 
     def close_step(self) -> None:
         if self.step is not None and self.step["forwards"]:
@@ -86,7 +138,20 @@ class TapState:
             f = f_u + cond_scale * (f_c - f_u)
         else:
             f = f_c
+        if self.smc_corrected:
+            f = f + feature_shift(self.last["dv"], self.last["w"], tuple(f.shape[1:4])).to(
+                f.device
+            )
         return f, x, self.last["sigma"]
+
+    @property
+    def smc_corrected(self) -> bool:
+        """The last actual step ran SMC-CFG and its features take the SMC correction."""
+        return (
+            self.last is not None
+            and self.last["dv"] is not None
+            and self.last["w"] is not None
+        )
 
 
 def _calc_cond_batch_wrapper(state: TapState):
@@ -113,13 +178,16 @@ def _diffusion_model_wrapper(state: TapState):
             if record["f"] is None:
                 record["f"] = inputs[0].detach()
 
-        handle = executor.class_obj.final_layer.linear.register_forward_pre_hook(keep)
+        linear = executor.class_obj.final_layer.linear
+        handle = linear.register_forward_pre_hook(keep)
         try:
             out = executor(x, timesteps, context, fps, padding_mask, **kwargs)
         finally:
             handle.remove()
         if record["f"] is not None:
             step["forwards"].append(record)
+            if state.smc and step["w"] is None:
+                step["w"] = linear_weight(linear, record["f"])
         return out
 
     return wrapper
@@ -127,9 +195,21 @@ def _diffusion_model_wrapper(state: TapState):
 
 def _post_cfg(state: TapState):
     def post_cfg(args):
-        if state.step is not None:
-            state.step["cond_scale"] = float(args["cond_scale"])
-            state.step["cfg_fn"] = "sampler_cfg_function" in args.get("model_options", {})
+        step = state.step
+        if step is not None:
+            step["cond_scale"] = float(args["cond_scale"])
+            fn = args.get("model_options", {}).get("sampler_cfg_function")
+            step["cfg_fn"] = None if fn is None else "smc" if is_smc_cfg(fn) else "other"
+            state.smc = step["cfg_fn"] == "smc"
+            uncond = args.get("uncond_denoised")
+            if state.smc and step["forwards"] and uncond is not None:
+                # Δv = v_smc − v_plain = (D_plain − D_smc) / σ  (CONST: D = x − σ·v)
+                cond, den = args["cond_denoised"].float(), args["denoised"].float()
+                plain = uncond.float() + step["cond_scale"] * (cond - uncond.float())
+                sigma = args["sigma"]
+                if torch.is_tensor(sigma):
+                    sigma = sigma.float().view(-1, *([1] * (den.ndim - 1)))
+                step["dv"] = ((plain - den) / sigma).detach()
         return args["denoised"]
 
     post_cfg._anima_pixel_tap = True

@@ -48,13 +48,18 @@ Elsewhere the head still decodes and the log warns (σ outside the trained point
 step, a `sampler_cfg_function` such as CFG++ replacing the plain CFG combine). Combined or area
 conditionings (more than one positive or negative at the last step) are refused.
 
+SMC-CFG from [ComfyUI-Spectrum-KSampler](https://github.com/sorryhyun/ComfyUI-Spectrum-KSampler)
+is the one `sampler_cfg_function` the tap follows: it keeps the velocity SMC-CFG adds to the plain
+combine at the last step and shifts the head's features by the minimum-norm amount that makes
+`final_layer.linear` return that velocity. The head was not trained on SMC-CFG renders.
+
 ## Code
 
 `_vendor/pixel_head.py` is a copy of `library/anima/pixel_head.py` from
 [anima_lora](https://github.com/sorryhyun/anima_lora), written by `make vendor-sync` there; edit
 it there. `tap.py` holds the ComfyUI hooks: a `CALC_COND_BATCH` wrapper (one record per sampler
 step), a `DIFFUSION_MODEL` wrapper with a pre-hook on the live `final_layer.linear` for the call,
-and a post-CFG function for the CFG scale.
+and a post-CFG function for the CFG scale (and, under SMC-CFG, the velocity residual).
 
 ## License
 

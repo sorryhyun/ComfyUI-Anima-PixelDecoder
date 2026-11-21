@@ -79,7 +79,18 @@ def pixel_decode(
             "Anima Pixel Decode: the last step was a cached (Spectrum) step; decoding the "
             f"last actual forward (σ {sigma:.4f})"
         )
-    if step["cfg_fn"] or (state.step is not None and state.step["cfg_fn"]):
+    kinds = {step["cfg_fn"], state.step["cfg_fn"] if state.step is not None else None}
+    if state.smc_corrected:
+        logger.info(
+            "Anima Pixel Decode: SMC-CFG detected; the features take its correction "
+            "(W⁺·Δv per token)"
+        )
+    elif "smc" in kinds:
+        logger.warning(
+            "Anima Pixel Decode: SMC-CFG detected but its correction was not recorded at "
+            "the last actual step; the head combines the features as f_u + g·(f_c − f_u)"
+        )
+    if "other" in kinds:
         logger.warning(
             "Anima Pixel Decode: a sampler_cfg_function replaced the CFG combine; the head "
             "combines the features as f_u + g·(f_c − f_u)"
